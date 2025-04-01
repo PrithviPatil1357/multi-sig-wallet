@@ -68,11 +68,15 @@ const CreatePage: FC = () => {
         return;
       }
 
+      // Ensure callData is a valid hex string ('0x' for empty)
+      const callDataForHash =
+        predefinedTxData.callData && predefinedTxData.callData.startsWith("0x") ? predefinedTxData.callData : "0x";
+
       const newHash = (await metaMultiSigWallet?.read.getTransactionHash([
         nonce as bigint,
         String(txTo),
         BigInt(predefinedTxData.amount as string),
-        predefinedTxData.callData as `0x${string}`,
+        callDataForHash as `0x${string}`,
       ])) as `0x${string}`;
 
       const signature = await walletClient.signMessage({
@@ -101,7 +105,7 @@ const CreatePage: FC = () => {
           hash: newHash,
           to: String(txTo),
           value: String(predefinedTxData.amount),
-          data: predefinedTxData.callData as `0x${string}`,
+          data: callDataForHash as `0x${string}`,
           nonce: Number(nonce),
           proposer: recover,
         };

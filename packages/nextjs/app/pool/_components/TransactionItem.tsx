@@ -1,8 +1,7 @@
 import { type FC } from "react";
 import { Address, BlockieAvatar } from "../../../components/scaffold-eth";
-import { Abi, DecodeFunctionDataReturnType, decodeFunctionData, formatEther } from "viem";
+import { Abi, DecodeFunctionDataReturnType, Address as TAddress, decodeFunctionData, formatEther } from "viem";
 import { useAccount, useWalletClient } from "wagmi";
-import { TransactionData } from "~~/app/create/page";
 import {
   useDeployedContractInfo,
   useScaffoldContract,
@@ -15,11 +14,32 @@ import { notification } from "~~/utils/scaffold-eth";
 
 // Define the SignatureInfo type locally
 type SignatureInfo = {
-  signer: Address;
+  signer: TAddress;
   signature: `0x${string}`; // Use `0x${string}` for Hash type consistency
 };
 
-type TransactionItemProps = { tx: TransactionData; completed: boolean; outdated: boolean };
+// Define a type for the props that matches the actual data structure passed
+// This mirrors DisplayTransactionData from pool/page.tsx
+type PoolTransactionData = {
+  hash: `0x${string}`;
+  to: TAddress;
+  value: string;
+  data: `0x${string}`;
+  nonce: bigint;
+  proposer?: TAddress;
+  signatures: SignatureInfo[]; // Expecting SignatureInfo array
+  chainId: number;
+  address: TAddress;
+  amount: string;
+  signers: TAddress[];
+  requiredApprovals?: bigint;
+};
+
+type TransactionItemProps = {
+  tx: PoolTransactionData; // Use the corrected type
+  completed: boolean;
+  outdated: boolean;
+};
 
 export const TransactionItem: FC<TransactionItemProps> = ({ tx, completed, outdated }) => {
   const { address } = useAccount();
@@ -46,7 +66,7 @@ export const TransactionItem: FC<TransactionItemProps> = ({ tx, completed, outda
   const { data: contractInfo } = useDeployedContractInfo("MetaMultiSigWallet");
 
   const txnData =
-    contractInfo?.abi && tx.data
+    contractInfo?.abi && tx.data && tx.data !== "0x"
       ? decodeFunctionData({ abi: contractInfo.abi as Abi, data: tx.data })
       : ({} as DecodeFunctionDataReturnType);
 
