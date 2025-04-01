@@ -36,22 +36,18 @@ type PoolTransactionData = {
 };
 
 type TransactionItemProps = {
-  tx: PoolTransactionData; // Use the corrected type
+  tx: PoolTransactionData;
   completed: boolean;
   outdated: boolean;
+  signaturesRequired: bigint | undefined;
 };
 
-export const TransactionItem: FC<TransactionItemProps> = ({ tx, completed, outdated }) => {
+export const TransactionItem: FC<TransactionItemProps> = ({ tx, completed, outdated, signaturesRequired }) => {
   const { address } = useAccount();
   const { data: walletClient } = useWalletClient();
   const transactor = useTransactor();
   const { targetNetwork } = useTargetNetwork();
   const poolServerUrl = getPoolServerUrl(targetNetwork.id);
-
-  const { data: signaturesRequired } = useScaffoldReadContract({
-    contractName: "MetaMultiSigWallet",
-    functionName: "signaturesRequired",
-  });
 
   const { data: nonce } = useScaffoldReadContract({
     contractName: "MetaMultiSigWallet",
@@ -153,9 +149,9 @@ export const TransactionItem: FC<TransactionItemProps> = ({ tx, completed, outda
 
           <div>{formatEther(BigInt(tx.amount))} Ξ</div>
 
-          {String(signaturesRequired) && (
+          {signaturesRequired !== undefined && (
             <span>
-              {tx.signatures.length}/{String(tx.requiredApprovals)} {hasSigned ? "✅" : ""}
+              {tx.signatures.length}/{String(signaturesRequired)} {hasSigned ? "✅" : ""}
             </span>
           )}
 
