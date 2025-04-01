@@ -84,33 +84,42 @@ const CreatePage: FC = () => {
       const isOwner = await metaMultiSigWallet?.read.isOwner([recover]);
 
       if (isOwner) {
-        if (!contractInfo?.address || !predefinedTxData.amount || !txTo) {
+        if (
+          !contractInfo?.address ||
+          !predefinedTxData.amount ||
+          !txTo ||
+          nonce === undefined ||
+          signaturesRequired === undefined
+        ) {
+          notification.error("Missing required contract or transaction data.");
           return;
         }
 
-        const txData: TransactionData = {
-          chainId: chainId,
+        const proposalData = {
           address: contractInfo.address,
-          nonce: nonce || 0n,
-          to: txTo,
-          amount: predefinedTxData.amount,
-          data: predefinedTxData.callData as `0x${string}`,
+          chainId: chainId,
           hash: newHash,
-          signatures: [signature],
-          signers: [recover],
-          requiredApprovals: signaturesRequired || 0n,
+          to: String(txTo),
+          value: String(predefinedTxData.amount),
+          data: predefinedTxData.callData as `0x${string}`,
+          nonce: Number(nonce),
+          proposer: recover,
         };
 
-        await fetch(poolServerUrl, {
+        const response = await fetch(`${poolServerUrl}propose`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(
-            txData,
-            // stringifying bigint
-            (key, value) => (typeof value === "bigint" ? value.toString() : value),
-          ),
+          body: JSON.stringify(proposalData),
         });
 
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({ message: "Unknown error" }));
+          throw new Error(
+            `Failed to propose transaction: ${response.status} ${response.statusText} - ${errorData.message || ""}`,
+          );
+        }
+
+        notification.success("Transaction proposed successfully!");
         setPredefinedTxData(DEFAULT_TX_DATA);
 
         setTimeout(() => {

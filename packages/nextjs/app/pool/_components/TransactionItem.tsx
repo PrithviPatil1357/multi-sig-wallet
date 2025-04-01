@@ -13,6 +13,12 @@ import { useTargetNetwork } from "~~/hooks/scaffold-eth/useTargetNetwork";
 import { getPoolServerUrl } from "~~/utils/getPoolServerUrl";
 import { notification } from "~~/utils/scaffold-eth";
 
+// Define the SignatureInfo type locally
+type SignatureInfo = {
+  signer: Address;
+  signature: `0x${string}`; // Use `0x${string}` for Hash type consistency
+};
+
 type TransactionItemProps = { tx: TransactionData; completed: boolean; outdated: boolean };
 
 export const TransactionItem: FC<TransactionItemProps> = ({ tx, completed, outdated }) => {
@@ -47,13 +53,12 @@ export const TransactionItem: FC<TransactionItemProps> = ({ tx, completed, outda
   const hasSigned = tx.signers.indexOf(address as string) >= 0;
   const hasEnoughSignatures = signaturesRequired ? tx.signatures.length >= Number(signaturesRequired) : false;
 
-  const getSortedSigList = async (allSigs: `0x${string}`[], newHash: `0x${string}`) => {
-    const sigList = [];
-    // eslint-disable-next-line no-restricted-syntax, guard-for-in
-    for (const s in allSigs) {
-      const recover = (await metaMultiSigWallet?.read.recover([newHash, allSigs[s]])) as `0x${string}`;
+  const getSortedSigList = async (allSigs: SignatureInfo[], newHash: `0x${string}`) => {
+    const sigList: { signature: `0x${string}`; signer: `0x${string}` }[] = [];
+    for (const sigInfo of allSigs) {
+      const recoveredSigner = (await metaMultiSigWallet?.read.recover([newHash, sigInfo.signature])) as `0x${string}`;
 
-      sigList.push({ signature: allSigs[s], signer: recover });
+      sigList.push({ signature: sigInfo.signature, signer: recoveredSigner });
     }
 
     sigList.sort((a, b) => {
@@ -62,17 +67,16 @@ export const TransactionItem: FC<TransactionItemProps> = ({ tx, completed, outda
 
     const finalSigList: `0x${string}`[] = [];
     const finalSigners: `0x${string}`[] = [];
-    const used: Record<string, boolean> = {};
-    // eslint-disable-next-line no-restricted-syntax, guard-for-in
-    for (const s in sigList) {
-      if (!used[sigList[s].signature]) {
-        finalSigList.push(sigList[s].signature);
-        finalSigners.push(sigList[s].signer);
+    const usedSignatures: Record<string, boolean> = {};
+    for (const sortedSigInfo of sigList) {
+      if (!usedSignatures[sortedSigInfo.signature]) {
+        finalSigList.push(sortedSigInfo.signature);
+        finalSigners.push(sortedSigInfo.signer);
+        usedSignatures[sortedSigInfo.signature] = true;
       }
-      used[sigList[s].signature] = true;
     }
 
-    return [finalSigList, finalSigners];
+    return finalSigList;
   };
 
   return (
@@ -148,44 +152,53 @@ export const TransactionItem: FC<TransactionItemProps> = ({ tx, completed, outda
                   title={!hasEnoughSignatures ? "Not enough signers to Execute" : ""}
                   onClick={async () => {
                     try {
-                      if (!walletClient) {
+                      if (!walletClient || !metaMultiSigWallet) {
+                        notification.error("Wallet or contract not ready.");
                         return;
                       }
 
-                      const newHash = (await metaMultiSigWallet?.read.getTransactionHash([
-                        nonce as bigint,
-                        tx.to,
-                        BigInt(tx.amount),
-                        tx.data,
-                      ])) as `0x${string}`;
+                      const hashToSign = tx.hash;
 
                       const signature = await walletClient.signMessage({
-                        message: { raw: newHash },
+                        message: { raw: hashToSign },
                       });
 
-                      const signer = await metaMultiSigWallet?.read.recover([newHash, signature]);
+                      const signer = await metaMultiSigWallet.read.recover([hashToSign, signature]);
 
-                      const isOwner = await metaMultiSigWallet?.read.isOwner([signer as string]);
+                      if (signer.toLowerCase() !== address?.toLowerCase()) {
+                        notification.error("Recovered signer does not match connected account!");
+                        return;
+                      }
+
+                      const isOwner = await metaMultiSigWallet.read.isOwner([signer]);
 
                       if (isOwner) {
-                        const [finalSigList, finalSigners] = await getSortedSigList(
-                          [...tx.signatures, signature],
-                          newHash,
-                        );
+                        const signData = {
+                          address: tx.address,
+                          chainId: tx.chainId,
+                          hash: hashToSign,
+                          signer: signer,
+                          signature: signature,
+                        };
 
-                        await fetch(poolServerUrl, {
+                        const response = await fetch(`${poolServerUrl}sign`, {
                           method: "POST",
                           headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify(
-                            {
-                              ...tx,
-                              signatures: finalSigList,
-                              signers: finalSigners,
-                            },
-                            // stringifying bigint
-                            (key, value) => (typeof value === "bigint" ? value.toString() : value),
-                          ),
+                          body: JSON.stringify(signData),
                         });
+
+                        if (!response.ok) {
+                          const errorData = await response.json().catch(() => ({ message: "Unknown error" }));
+                          if (response.status === 409) {
+                            notification.warning(`Already signed: ${errorData.message || ""}`);
+                          } else {
+                            throw new Error(
+                              `Failed to add signature: ${response.status} ${response.statusText} - ${errorData.message || ""}`,
+                            );
+                          }
+                        } else {
+                          notification.success("Signature added successfully!");
+                        }
                       } else {
                         notification.info("Only owners can sign transactions");
                       }
@@ -209,14 +222,19 @@ export const TransactionItem: FC<TransactionItemProps> = ({ tx, completed, outda
                         console.log("No contract info");
                         return;
                       }
-                      const newHash = (await metaMultiSigWallet.read.getTransactionHash([
+                      const hashForExecution = (await metaMultiSigWallet.read.getTransactionHash([
                         nonce as bigint,
                         tx.to,
                         BigInt(tx.amount),
                         tx.data,
                       ])) as `0x${string}`;
 
-                      const [finalSigList] = await getSortedSigList(tx.signatures, newHash);
+                      const finalSigList = await getSortedSigList(tx.signatures, hashForExecution);
+
+                      if (finalSigList.length < Number(signaturesRequired)) {
+                        notification.error("Transaction no longer has enough valid signatures after processing.");
+                        return;
+                      }
 
                       await transactor(() =>
                         metaMultiSigWallet.write.executeTransaction([tx.to, BigInt(tx.amount), tx.data, finalSigList]),
